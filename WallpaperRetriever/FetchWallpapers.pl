@@ -41,6 +41,7 @@ my $root_www : shared = "http://wall.alphacoders.com/";
 my @artists : shared;
 my @images : shared;
 my @enqueued : shared;
+my $status : shared = 1;
 
 my $agent = WWW::Mechanize->new(
 	agent       => "Linux Mozilla",
@@ -51,12 +52,15 @@ my $agent = WWW::Mechanize->new(
 $agent->get($root_www);
 enqueue_links($agent);
 
-my $art_thread   = threads->create( \&artist_pages );
-my $image_thread = threads->create( \&image_pages );
+my $art_thread   = threads->create( { 'void' => 1 }, \&artist_pages );
+my $image_thread = threads->create( { 'void' => 1 }, \&image_pages );
 
 while ( $art_thread->is_running() || $image_thread->is_running() ) {
-	if ($image_queue->pending() == 0 && $artist_queue->pending() == 0) {
-		threads->exit();
+	if ( $image_queue->pending() == 0 && $artist_queue->pending() == 0 ) {
+		$status = 0;
+		foreach my $thread ( threads->List() ) {
+			$thread->join();
+		}
 	}
 	sleep(30);
 }
@@ -69,6 +73,7 @@ who have left comments on that page and the actual artwork uploaded by that
 artist.
 
 =cut
+
 sub artist_pages {
 
 	my $art_agent = WWW::Mechanize->new(
@@ -94,9 +99,11 @@ sub artist_pages {
 					enqueue_links($art_agent);
 				}
 				$artists[$id]++;
+
 				#sleep(45);
 			}
 		}
+		return if ( !$status );
 	}
 }
 
@@ -106,6 +113,7 @@ image_pages enqueues new found wallpapers and artists by checking queued images
 for comments and other favorited images.
 
 =cut
+
 sub image_pages {
 	my $image_agent = WWW::Mechanize->new(
 		agent       => "Linux Mozilla",
@@ -123,7 +131,9 @@ sub image_pages {
 				$image_agent->get( $root_www . "wallpaper.php?i=" . $id );
 				enqueue_links($image_agent);
 				my $subdir = substr( $id, 0, 3 );
-				if ( !-e "wallpapers/$subdir/$id.jpg" || -s "wallpapers/$subdir/$id.jpg" < 10000) {
+				if ( !-e "wallpapers/$subdir/$id.jpg"
+					|| -s "wallpapers/$subdir/$id.jpg" < 10000 )
+				{
 					my $im =
 					  $image_agent->find_image( url_regex => qr/$subdir\/$id/ );
 					if ( defined($im) ) {
@@ -138,6 +148,7 @@ sub image_pages {
 							print "Saved image $id\n";
 
 							$images[$id]++;
+
 							#sleep(10);
 						}
 					}
@@ -152,6 +163,7 @@ sub image_pages {
 				}
 			}
 		}
+		return if ( !$status );
 	}
 }
 
@@ -164,6 +176,7 @@ to see if that page has already been dug through before. This reduces some
 redundancy that the program might accidently go through otherwise.
 
 =cut
+
 sub enqueue_links {
 	my $agent = shift;
 	if ( $agent->success() ) {
@@ -171,7 +184,7 @@ sub enqueue_links {
 		  $agent->find_all_links( url_regex => qr/big\.php\?i=[\d]+/i );
 		foreach my $link (@links) {
 			if ( $link->url() =~ qr/big\.php\?i=([\d]+)/i ) {
-				if ( !($images[$1] || $enqueued[$1])) {
+				if ( !( $images[$1] || $enqueued[$1] ) ) {
 					$image_queue->enqueue($link);
 					$enqueued[$1]++;
 				}
