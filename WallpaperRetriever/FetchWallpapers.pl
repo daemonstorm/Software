@@ -40,6 +40,7 @@ my $image_queue  = Thread::Queue->new();
 my $root_www : shared = "http://wall.alphacoders.com/";
 my @artists : shared;
 my @images : shared;
+my @enqueued : shared;
 
 my $agent = WWW::Mechanize->new(
 	agent       => "Linux Mozilla",
@@ -54,6 +55,9 @@ my $art_thread   = threads->create( \&artist_pages );
 my $image_thread = threads->create( \&image_pages );
 
 while ( $art_thread->is_running() || $image_thread->is_running() ) {
+	if ($image_queue->pending() == 0 && $artist_queue->pending() == 0) {
+		threads->exit();
+	}
 	sleep(30);
 }
 
@@ -90,7 +94,7 @@ sub artist_pages {
 					enqueue_links($art_agent);
 				}
 				$artists[$id]++;
-				sleep(45);
+				#sleep(45);
 			}
 		}
 	}
@@ -119,7 +123,7 @@ sub image_pages {
 				$image_agent->get( $root_www . "wallpaper.php?i=" . $id );
 				enqueue_links($image_agent);
 				my $subdir = substr( $id, 0, 3 );
-				if ( !-e "wallpapers/$subdir/$id.jpg" || !-s >0) {
+				if ( !-e "wallpapers/$subdir/$id.jpg" || -s "wallpapers/$subdir/$id.jpg" < 10000) {
 					my $im =
 					  $image_agent->find_image( url_regex => qr/$subdir\/$id/ );
 					if ( defined($im) ) {
@@ -131,10 +135,15 @@ sub image_pages {
 							print FH $image_agent->content();
 							close FH;
 
-							#$image_agent->save_content();
+							print "Saved image $id\n";
+
 							$images[$id]++;
-							sleep(10);
+							#sleep(10);
 						}
+					}
+					else {
+						$images[$id]++;
+						print "No wallpaper with ID $id\n";
 					}
 				}
 				else {
@@ -162,8 +171,9 @@ sub enqueue_links {
 		  $agent->find_all_links( url_regex => qr/big\.php\?i=[\d]+/i );
 		foreach my $link (@links) {
 			if ( $link->url() =~ qr/big\.php\?i=([\d]+)/i ) {
-				if ( !$images[$1] ) {
+				if ( !($images[$1] || $enqueued[$1])) {
 					$image_queue->enqueue($link);
+					$enqueued[$1]++;
 				}
 			}
 		}
@@ -178,5 +188,5 @@ sub enqueue_links {
 			}
 		}
 	}
-	print $artist_queue->pending() . "\n" . $image_queue->pending() . "\n";
+	print $artist_queue->pending() . "\t" . $image_queue->pending() . "\n";
 }
