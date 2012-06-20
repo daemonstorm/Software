@@ -58,7 +58,7 @@ my $image_thread = threads->create( { 'void' => 1 }, \&image_pages );
 while ( $art_thread->is_running() || $image_thread->is_running() ) {
 	if ( $image_queue->pending() == 0 && $artist_queue->pending() == 0 ) {
 		$status = 0;
-		foreach my $thread ( threads->List() ) {
+		foreach my $thread ( threads->list() ) {
 			$thread->join();
 		}
 	}
