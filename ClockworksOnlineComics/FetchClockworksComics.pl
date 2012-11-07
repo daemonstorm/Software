@@ -13,10 +13,16 @@ my $img_agent = WWW::Mechanize->new(
 );
 
 my $start = "http://shawntionary.com/clockworks/?p=31";
+my $done  = 0;
 
 $agent->get($start);
 if ( $agent->success() ) {
-	while ( $agent->find_link( text_regex => qr/next/i ) ) {
+	while ( !$done ) {
+
+		$done++
+		  if ( !defined( $agent->find_link( text_regex => qr/next/i ) ) )
+		  ;
+
 		my @images =
 		  $agent->find_all_images(
 			url_regex => qr/shawntionary\.com\/clockworks\/comics/i );
