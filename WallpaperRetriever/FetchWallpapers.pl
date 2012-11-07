@@ -2,6 +2,8 @@
 use strict;
 use WWW::Mechanize;
 use File::Path qw(make_path);
+use File::Find;
+use File::Basename;
 
 use threads;
 use Thread::Queue;
@@ -41,7 +43,9 @@ my $root_www : shared = "http://wall.alphacoders.com/";
 my @artists : shared;
 my @images : shared;
 my @enqueued : shared;
-my $status : shared = 1;
+my $downloaded:shared;
+my $skipped:shared;
+my $error:shared;
 
 my $agent = WWW::Mechanize->new(
 	agent       => "Linux Mozilla",
@@ -54,14 +58,18 @@ enqueue_links($agent);
 
 my $art_thread   = threads->create( { 'void' => 1 }, \&artist_pages );
 my $image_thread = threads->create( { 'void' => 1 }, \&image_pages );
+my $scan_thread = threads->create( { 'void' => 1 }, \&rescan_directory );
 
 while ( $art_thread->is_running() || $image_thread->is_running() ) {
 	if ( $image_queue->pending() == 0 && $artist_queue->pending() == 0 ) {
-		$status = 0;
+		$image_queue->enqueue(undef);
+		$artist_queue->enqueue(undef);
 		foreach my $thread ( threads->list() ) {
 			$thread->join();
 		}
+		print "Downloaded Images: $downloaded\nSkipped Images: $skipped\nErrors: $error\n";
 	}
+	print $artist_queue->pending() . "\t" . $image_queue->pending() . "\n";
 	sleep(30);
 }
 
@@ -99,11 +107,8 @@ sub artist_pages {
 					enqueue_links($art_agent);
 				}
 				$artists[$id]++;
-
-				#sleep(45);
 			}
 		}
-		return if ( !$status );
 	}
 }
 
@@ -121,7 +126,7 @@ sub image_pages {
 		onerror     => undef,
 	);
 
-	while ( my $link = $image_queue->dequeue() ) {
+	while (my $link = $image_queue->dequeue()) {
 		if ( $link->url() =~ qr/big\.php\?i=([\d]+)/i ) {
 			my $id = $1;
 			if ( !$images[$id] ) {
@@ -148,22 +153,26 @@ sub image_pages {
 							print "Saved image $id\n";
 
 							$images[$id]++;
-
-							#sleep(10);
+							$downloaded++;
 						}
 					}
 					else {
 						$images[$id]++;
-						print "No wallpaper with ID $id\n";
+						#print "No wallpaper with ID $id\n";
+						$error++;
 					}
 				}
 				else {
 					$images[$id]++;
-					print "Skipping $id as it was already downloaded\n";
+					#print "Skipping $id as it was already downloaded\n";
+					$skipped++;
 				}
 			}
 		}
-		return if ( !$status );
+		else {
+			print $link->url() . "\n";
+			$error++;
+		}
 	}
 }
 
@@ -201,5 +210,24 @@ sub enqueue_links {
 			}
 		}
 	}
-	print $artist_queue->pending() . "\t" . $image_queue->pending() . "\n";
+}
+
+sub rescan_directory {
+	find( { wanted => \&readd_image, no_chdir => 1 }, "wallpapers/" );
+}
+
+sub readd_image {
+	my $name = fileparse( $_, qr/\.[^.]*/ );
+	if ( $name =~ /^[\d]+$/ ) {
+
+		my $link = WWW::Mechanize::Link->new(
+			{
+				url  => $root_www . "big.php?i=" . $name,
+				name => $name,
+				base => $root_www,
+			}
+		);
+		$image_queue->enqueue($link);
+		$enqueued[$1]++;
+	}
 }

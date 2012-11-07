@@ -5,6 +5,9 @@ use Thread::Queue;
 use threads::shared;
 use Wx;
 
+use lib '.';
+use Microarray::gpr;
+
 =head1 NAME
 
 QCPC - Quality Control Process Control Application
@@ -33,6 +36,9 @@ no Front-Cover Texts, and with no Back-Cover Texts.
 
 =cut
 
+my $DONE_EVENT : shared = Wx::NewEventType();
+#my $EXCEL : shared;
+
 my $wx = QCPC::MainWindow->new();
 $wx->MainLoop;
 
@@ -41,9 +47,10 @@ use strict;
 use base qw(Wx::App);
 
 sub OnInit {
-	my $self = shift;
+	my $self  = shift;
 	my $frame =
 	  QCPC::Frame->new( undef, -1, "QCPC Application", [ 1, 1 ], [ 400, 400 ] );
+
 	$self->SetTopWindow($frame);
 	$frame->Show(1);
 }
@@ -57,10 +64,9 @@ use File::Basename;
 use Excel::Writer::XLSX;
 use Excel::Writer::XLSX::Utility;
 use List::Util qw(max min);
+use Wx::Event qw(EVT_BUTTON EVT_COMMAND);
 
 use base qw(Wx::Frame);
-
-use Wx::Event;
 
 my @control_list;
 my @desired_list;
@@ -82,6 +88,7 @@ my @peptides;
 Initializes the frame and sets up the various buttons and events.
 
 =cut
+
 sub new {
 	my $class = shift;
 	my $self  = $class->SUPER::new(@_);    # call the superclass' constructor
@@ -144,7 +151,7 @@ sub new {
 	EVT_BUTTON(
 		$self,              # Object to bind to
 		$run_button,        # ButtonID
-		\&RunClicked        # Subroutine to execute
+		\&start_thread      # Subroutine to execute
 	);
 
 	Wx::StaticText->new(
@@ -178,7 +185,58 @@ sub new {
 	foreach ( 0 .. scalar @{ $self->{default_columns} } ) {
 		$self->{columns}->SetSelection($_);
 	}
+	EVT_COMMAND( $self, -1, $DONE_EVENT, \&done );
 	return $self;
+}
+
+sub done {
+	my ( $self, $event ) = @_;
+	print $event->GetData;
+	$self->{run}->Enable;
+	foreach ( threads->list() ) {
+		$_->join();
+	}
+	return;
+}
+
+sub start_thread {
+	my $self = shift;
+	$self->{run}->Disable;
+
+	my @control_list = split( /\s?+,\s?+/, $self->{controls}->GetValue );
+	my @desired_list = $self->{columns}->GetSelections();
+
+	foreach ( 0 .. $#desired_list ) {
+		$desired_list[$_] = $self->{columns}->GetString( $desired_list[$_] );
+	}
+
+	my @files;
+
+	foreach ( $self->{list}->GetSelections() ) {
+		push @files, $self->{list}->GetString($_);
+	}
+
+	my $filter = "median";
+	foreach my $rb ( @{ $self->{filter} } ) {
+		if ( $rb->GetValue() ) {
+			$filter = $rb->GetLabel();
+		}
+	}
+
+	threads->create(
+		{ 'void' => 1 },
+		\&RunClicked,
+		{
+			-window       => $self,
+			-dir          => $self->{dir},
+			-out          => $self->{xls},
+			-control_list => join( ",", @control_list ),
+			-desired_list => join( ",", @desired_list ),
+			-filter       => $filter,
+			-files        => \@files,
+		}
+	);
+	return;
 }
 
 =head1 C<file_peptide_stats>
@@ -253,7 +311,8 @@ sub file_control_stats {
 				foreach my $key ( @{ $gpr->{"controls"}->{$control} } ) {
 					$stddev += ( $key->{$signal} - $mean )**2;
 				}
-				$stddev = sqrt(
+				$stddev =
+				  sqrt(
 					$stddev / scalar( @{ $gpr->{"controls"}->{$control} } ) );
 				push @data, "$stddev";
 				my $cv = $stddev / $mean;
@@ -285,7 +344,7 @@ controls separately.
 =cut
 
 sub file_total_stats {
-	my ($self) = @_;
+	my ($worksheet) = @_;
 	my @controls;    # the controls that were actually found for the first file
 	                 #(and so for each file after I hope)
 	$col = 1;
@@ -315,8 +374,7 @@ sub file_total_stats {
 				$stddev = sqrt( $stddev / $count );
 			}
 			my $cv = $stddev / $mean;
-			$self->{worksheet}
-			  ->write( $row++, $col, [ "$mean", "$stddev", "$cv" ] );
+			$worksheet->write( $row++, $col, [ "$mean", "$stddev", "$cv" ] );
 		}
 
 		# found the mean for the various control types. Now do the same for all
@@ -339,16 +397,15 @@ sub file_total_stats {
 			$stddev = sqrt( $stddev / $count );
 		}
 		$cv = $stddev / $mean;
-		$self->{worksheet}
-		  ->write( $row++, $col, [ "$mean", "$stddev", "$cv" ] );
+		$worksheet->write( $row++, $col, [ "$mean", "$stddev", "$cv" ] );
 		$col += 3;
 	}
 	$col = 0;
 	$row = 1;
 	foreach ( unique(@controls) ) {
-		$self->{worksheet}->write( $row++, $col, $_ );
+		$worksheet->write( $row++, $col, $_ );
 	}
-	$self->{worksheet}->write( $row, $col, "Signal" );
+	$worksheet->write( $row, $col, "Signal" );
 }
 
 =head1 C<col_to_ref>
@@ -375,7 +432,10 @@ Converts a number to a log base N result.
 
 sub log_base {
 	my ( $base, $value ) = @_;
-	return log($value) / log($base);
+	if ( $value > 0 && $base > 0 ) {
+		return log($value) / log($base);
+	}
+	else { return 0; }
 }
 
 =head2 GPRClicked
@@ -387,7 +447,7 @@ choice of directory made by the end user.
 
 sub GPRClicked {
 	my ( $self, $event ) = @_;
-	$self->{dir} = Wx::DirSelector("Select GPR Directory");
+	$self->{dir} = Wx::DirSelector( "Select GPR Directory", $self->{dir}, "" );
 	if ( -e $self->{dir} && -d $self->{dir} ) {
 		opendir my $dh, $self->{dir}
 		  || die "can't opendir " . $self->{dir} . " $!";
@@ -408,9 +468,9 @@ sub GPRClicked {
 				#split the line on tabs for mapping
 				my @temp = split( /\t/, lc($line) );
 				$self->{columns}->Set( \@temp );
-				foreach (0..$#temp){
-					if(inlist($temp[$_],@current_selections)){
-						$self->{columns}->SetSelection($_);						
+				foreach ( 0 .. $#temp ) {
+					if ( inlist( $temp[$_], @current_selections ) ) {
+						$self->{columns}->SetSelection($_);
 					}
 				}
 				last;
@@ -431,7 +491,7 @@ the file to be .xlsx whether the user selected an xlsx file or not.
 sub XLSClicked {
 	my ( $self, $event ) = @_;
 	( $self->{xls} ) = Wx::FileSelector("Select XLSX File for writing");
-	if ($self->{xls} !~ /\.xlsx$/i){
+	if ( $self->{xls} !~ /\.xlsx$/i ) {
 		$self->{xls} =~ s/\.[a-z]{2,4}$//i;
 		$self->{xls} .= '.xlsx';
 	}
@@ -445,93 +505,160 @@ GPR files for processing.
 =cut
 
 sub RunClicked {
-	my ( $self, $event ) = @_;
-	@control_list = @desired_list = @gprs = @graphs = @peptides = ();
+	print scalar(@_) . "\n";
+	my $parameters = shift;
+
+	my ( @control_list, @desired_list, @gprs, @graphs, @peptides );
 
 	%gprs_stats_cache = %peptide_row = {};
 	$row              = 0;
 	$col              = 0;
 
-	if ( $self->{dir} eq "" ) {
-		Wx::MessageBox( "No Directory was Selected", "ERROR!!!", "", $self );
+	if ( $parameters->{-dir} eq "" ) {
+		Wx::MessageBox( "No Directory was Selected", "ERROR!!!", "", -1 );
+		my $threvent = new Wx::PlThreadEvent( -1, $DONE_EVENT, 0 );
+		Wx::PostEvent( $parameters->{-window}, $threvent );
 		return;
 	}
-	if ( ref( $self->{xls} ) ne "" || $self->{xls} eq "" ) {
-		Wx::MessageBox( "No Excel File was Selected", "ERROR!!!", "", $self );
+	if ( ref( $parameters->{-out} ) ne "" || $parameters->{-out} eq "" ) {
+		Wx::MessageBox( "No Excel File was Selected", "ERROR!!!", "", -1 );
+		my $threvent = new Wx::PlThreadEvent( -1, $DONE_EVENT, 0 );
+		Wx::PostEvent( $parameters->{-window}, $threvent );
 		return;
 	}
-	@control_list = split( /\s?+,\s?+/, $self->{controls}->GetValue );
-	@desired_list = $self->{columns}->GetSelections();
+	@control_list = split( /,/, $parameters->{-control_list} );
+	@desired_list = split( /,/, $parameters->{-desired_list} );
 
-	foreach ( 0 .. $#desired_list ) {
-		$desired_list[$_] = $self->{columns}->GetString( $desired_list[$_] );
-	}
+# defalut to median so that the user doesn't have to select a value from the radio selections
+	my $filter = $parameters->{-filter};
 
-	# defalut to median so that the user doesn't have to select a value from the radio selections
-	my $filter = "median";
-	foreach my $rb ( @{ $self->{filter} } ) {
-		if ( $rb->GetValue() ) {
-			$filter = $rb->GetLabel();
-		}
-	}
-
-	# find the headers that match the pattern of fXXX or bXXX to find the light frequencies in the GPR files
+# find the headers that match the pattern of fXXX or bXXX to find the light frequencies in the GPR files
 	my $search = '^[fb]\d{1,3}.*' . lc($filter) . '$';
 
 	@mean = grep( /$search/, @desired_list );
 
-	# create a new file. This will overwrite the selected XLSX file if one existed.
-	my $EXCEL = Excel::Writer::XLSX->new( $self->{xls} );
+ # create a new file. This will overwrite the selected XLSX file if one existed.
+	my $EXCEL = Excel::Writer::XLSX->new( $parameters->{-out} );
 
-	my @files = $self->{list}->GetSelections();
-	foreach ( 0 .. $#files ) {
-		files( $self->{dir} . "/" . $self->{list}->GetString( $files[$_] ) );
+	foreach ( 0 .. $#{ $parameters->{-files} } ) {
+		$gprs[@gprs] =
+		  Microarray::gpr->new( -file => $parameters->{-dir} . "/"
+			  . ${ $parameters->{-files} }[$_] );
 	}
 
-	$self->{worksheet} = $EXCEL->add_worksheet('Files');
-	my $graphsheet = $EXCEL->add_worksheet('Graphs');
+	my $current_worksheet = $EXCEL->add_worksheet('Files');
+	my $graphsheet        = $EXCEL->add_worksheet('Graphs');
 
 	foreach my $gpr (@gprs) {
-		$self->{worksheet}->write( $row, $col++, $gpr->{"file"} );
-		foreach ( keys %{ $gpr->{controls} } ) {
-			$self->{worksheet}
-			  ->write( $row, $col, [ $_, scalar @{ $gpr->{controls}->{$_} } ] );
+		$current_worksheet->write( $row, $col++, $gpr->get_filename() );
+		foreach (@control_list) {
+			$current_worksheet->write( $row, $col,
+				[ $_, $gpr->get_row_count($_) ] );
 			$col += 2;
 		}
-		$self->{worksheet}->write( $row, $col,
-			[ "peptides", scalar keys( %{ $gpr->{peptides} } ) ] );
+		$current_worksheet->write( $row, $col,
+			[ "peptides", $gpr->get_keys() ] );
 		$row++;
 		$col = 0;
 	}
 
-	$self->{worksheet} = $EXCEL->add_worksheet('File Statistics');
+	$current_worksheet = $EXCEL->add_worksheet('File Statistics');
 
 	my @headers = ( "File", "Control" );
 	foreach (@mean) {
 		push @headers, ( "$_", "$_ stddev", "$_ cv", "Min", "Max" );
 	}
-	$self->{worksheet}->write( 0, 0, \@headers );
+	$current_worksheet->write( 0, 0, \@headers );
 	$row = 1;
 	$col = 0;
 
-	$self->file_peptide_stats();
-	$self->file_control_stats();
+	foreach my $gpr (@gprs) {
+		my @data = ( $gpr->get_filename(), "Signal" );
+		foreach my $signal (@mean) {
+			my %data;
+			my @signals;
+			my $mean;
+			my $stddev;
+			foreach my $key ( $gpr->get_keys() ) {
+				$mean += $gpr->get_datum($key)->{$signal};
+				push @signals, $gpr->get_datum($key)->{$signal};
+			}
+			$mean /= scalar( $gpr->get_keys() );
+			push @data, $mean;
 
-	$self->{worksheet} = $EXCEL->add_worksheet('Array Data');
-	$self->{worksheet}->hide();
+			foreach my $key ( $gpr->get_keys() ) {
+				$stddev += ( $gpr->get_datum($key)->{$signal} - $mean )**2;
+			}
+			$stddev = sqrt( $stddev / scalar( $gpr->get_keys() ) );
+			push @data, $stddev;
+			my $cv = $stddev / $mean;
+			push @data, $cv;
+
+			# min and max of the peptides
+			my ($min) = sort { $a <=> $b } @signals;
+			my ($max) = sort { $b <=> $a } @signals;
+			push @data, ( $min, $max );
+
+			$data{"mean"}                                             = $mean;
+			$data{"stddev"}                                           = $stddev;
+			$gprs_stats_cache{ $gpr->get_filename() . "-" . $signal } = \%data;
+		}
+		$current_worksheet->write( $row, $col, \@data );
+		$row++;
+	}
+
+	foreach my $gpr (@gprs) {
+		foreach my $control (@control_list) {
+			my @data = ( $gpr->get_filename(), "$control" );
+			foreach my $signal (@mean) {
+				my $mean;
+				my $stddev;
+				foreach my $key ( $gpr->get_row_data($control) ) {
+					$mean += $key->{$signal};
+				}
+				$mean /= $gpr->get_row_count($control)
+				  if ( $gpr->get_row_count($control) > 0 );
+				push @data, $mean;
+
+				foreach my $key ( $gpr->get_row_data($control) ) {
+					$stddev += ( $key->{$signal} - $mean )**2;
+				}
+				$stddev = sqrt( $stddev / $gpr->get_row_count($control) )
+				  if ( $gpr->get_row_count($control) > 0 );
+				push @data, $stddev;
+				my $cv = $stddev / $mean;
+				push @data, $cv;
+
+				# min and max of the controls
+				my ($min) =
+				  sort { $a->{$signal} <=> $b->{$signal} }
+				  $gpr->get_row_data($control);
+				my ($max) =
+				  sort { $b->{$signal} <=> $a->{$signal} }
+				  $gpr->get_row_data($control);
+				push @data, ( $min->{$signal}, $max->{$signal} );
+			}
+			$current_worksheet->write( $row, $col, \@data );
+			$row++;
+		}
+	}
+
+	$current_worksheet = $EXCEL->add_worksheet('Array Data');
+	$current_worksheet->hide();
 	$row = 1;
 	$col = 0;
 
 	my $count = 1;
 	my @peptides;
 	foreach my $gpr (@gprs) {
-		push @peptides, keys %{ $gpr->{"peptides"} };
+		push @peptides, $gpr->get_keys();
 	}
+
 	@peptides = unique(@peptides);
 	for ( my $i = 0 ;
 		$i < @peptides ; $i += max( 1, int( @peptides / 20000 ) ) )
 	{
-		$self->{worksheet}->write( $count, $col, $peptides[$i] );
+		$current_worksheet->write( $count, $col, $peptides[$i] );
 		$peptide_row{ $peptides[$i] } = $count++;
 	}
 	$col = 1;
@@ -542,13 +669,13 @@ sub RunClicked {
 	my ($mean) = @mean;
 	my @keys = keys %peptide_row;
 	foreach my $gpr (@gprs) {
-		$self->{worksheet}->write( 0, $col, $gpr->{'file'} );
+		$current_worksheet->write( 0, $col, $gpr->{'file'} );
 		foreach my $key (@keys) {
-			if (   defined( $gpr->{"peptides"}->{$key} )
+			if (   defined( $gpr->get_datum($key) )
 				&& defined( $peptide_row{$key} ) )
 			{
-				$self->{worksheet}->write( $peptide_row{$key}, $col,
-					log_base( 10, $gpr->{"peptides"}->{$key}->{$mean} ) );
+				$current_worksheet->write( $peptide_row{$key}, $col,
+					log_base( 10, $gpr->get_datum($key)->{$mean} ) );
 			}
 		}
 		$col++;
@@ -556,27 +683,29 @@ sub RunClicked {
 	foreach my $i ( 1 .. $col - 2 ) {
 		foreach my $j ( $i + 1 .. $col - 1 ) {
 			my $graph = $EXCEL->add_chart( type => 'scatter', embedded => 1 );
-			$graph->set_title( name => $gprs[ $i - 1 ]->{'file'} . ' vs '
-				  . $gprs[ $j - 1 ]->{"file"} );
+			$graph->set_title( name => $gprs[ $i - 1 ]->get_filename() . ' vs '
+				  . $gprs[ $j - 1 ]->get_filename() );
 			$graph->add_series(
 				categories => '='
-				  . $self->{worksheet}->get_name() . '!'
-				  . col_to_ref( xl_rowcol_to_cell( 1,            $i ) ) . ':'
+				  . $current_worksheet->get_name() . '!'
+				  . col_to_ref( xl_rowcol_to_cell( 1, $i ) ) . ':'
 				  . col_to_ref( xl_rowcol_to_cell( scalar @keys, $i ) ),
 				values => '='
-				  . $self->{worksheet}->get_name() . '!'
-				  . col_to_ref( xl_rowcol_to_cell( 1,            $j ) ) . ':'
+				  . $current_worksheet->get_name() . '!'
+				  . col_to_ref( xl_rowcol_to_cell( 1, $j ) ) . ':'
 				  . col_to_ref( xl_rowcol_to_cell( scalar @keys, $j ) ),
 			);
-			$graph->set_x_axis( name => "log10 " . $gprs[ $i - 1 ]->{"file"} );
-			$graph->set_y_axis( name => "log10 " . $gprs[ $j - 1 ]->{"file"} );
+			$graph->set_x_axis(
+				name => "log10 " . $gprs[ $i - 1 ]->get_filename() );
+			$graph->set_y_axis(
+				name => "log10 " . $gprs[ $j - 1 ]->get_filename() );
 			$graph->set_legend( position => 'none' );
 			push @graphs, $graph;
 		}
 	}
 
-	$datasheet = $EXCEL->add_worksheet('Log Ratio Data');
-	$self->{worksheet} = $EXCEL->add_worksheet('File Log Ratios');
+	$datasheet         = $EXCEL->add_worksheet('Log Ratio Data');
+	$current_worksheet = $EXCEL->add_worksheet('File Log Ratios');
 	$datasheet->hide();
 	$row = $col = 0;
 
@@ -593,30 +722,30 @@ sub RunClicked {
 	$data_col++;
 	$row = $col = 0;
 	($mean) = @mean;
-	$self->{worksheet}->write( $row++, $col,
+	$current_worksheet->write( $row++, $col,
 		[ "File 1", "File 2", "$_ Ratio", "$mean 95% CI" ] );
 	foreach my $i ( 0 .. $#gprs - 1 ) {
 		my $gpr1 = $gprs[$i];
-		my @keys = keys %{ $gpr1->{"peptides"} };
+		my @keys = $gpr1->get_keys();
 		foreach my $j ( $i + 1 .. $#gprs ) {
 			my @CI;    # confidence interval
 			my $count = 0;
 			my $array_mean;
 			my $gpr2 = $gprs[$j];
 			$datasheet->write( 0, $data_col,
-				$gpr1->{"file"} . "/" . $gpr2->{"file"} );
+				$gpr1->get_filename() . "/" . $gpr2->get_filename() );
 			foreach my $key (@keys) {
-				if (   defined( $gpr1->{"peptides"}->{$key} )
-					&& defined( $gpr2->{"peptides"}->{$key} ) )
+				if (   defined( $gpr1->get_datum($key) )
+					&& defined( $gpr2->get_datum($key) ) )
 				{
-					if (   $gpr1->{"peptides"}->{$key}->{$mean} > 0
-						&& $gpr2->{"peptides"}->{$key}->{$mean} > 0 )
+					if (   $gpr1->get_datum($key)->{$mean} > 0
+						&& $gpr2->get_datum($key)->{$mean} > 0 )
 					{
 						$count++;
 						push @CI,
 						  log_base( 2,
-							$gpr1->{"peptides"}->{$key}->{$mean} /
-							  $gpr2->{"peptides"}->{$key}->{$mean} );
+							$gpr1->get_datum($key)->{$mean} /
+							  $gpr2->get_datum($key)->{$mean} );
 						$ratio_buckets{ int( $CI[$#CI] * 10 ) }++;
 						$CI[$#CI] = abs( $CI[$#CI] );
 						$array_mean += $CI[$#CI];
@@ -630,12 +759,12 @@ sub RunClicked {
 			}
 			if ( $count > 0 ) {
 				@CI = sort @CI;
-				$self->{worksheet}->write(
+				$current_worksheet->write(
 					$row++,
 					$col,
 					[
-						$gpr1->{"file"},      $gpr2->{"file"},
-						$array_mean / $count, 2**$CI[ int( .95 * @CI ) ]
+						$gpr1->get_filename(), $gpr2->get_filename(),
+						$array_mean / $count,  2**$CI[ int( .95 * @CI ) ]
 					]
 				);
 			}
@@ -644,8 +773,8 @@ sub RunClicked {
 	}
 	my ( $x_name, $y_name );
 	$x_name = $y_name = '=' . $datasheet->get_name() . '!';
-	$data_col++
-	  ; # create an empty column between the file ratios and the overall bucket data
+	$data_col
+	  ++; # create an empty column between the file ratios and the overall bucket data
 	$row = 0;
 
 	$datasheet->write( $row++, $data_col, [ "Power", "Count" ] );
@@ -667,24 +796,83 @@ sub RunClicked {
 	);
 	push @graphs, $graph;
 
-	$self->{worksheet} = $EXCEL->add_worksheet('Across Array Stats');
-	@headers = ("Control");
+	my @controls;
+
+	$current_worksheet = $EXCEL->add_worksheet('Across Array Stats');
+	@headers           = ("Control");
 	foreach (@mean) {
 		push @headers, ( "$_", "$_ stddev", "$_ cv" );
 	}
-	$self->{worksheet}->write( 0, 0, \@headers );
-	$row = 1;
-	$col = 0;
-	$self->file_total_stats();
+	$current_worksheet->write( 0, 0, \@headers );
+	$col = 1;
+	foreach my $signal (@mean) {
+		$row = 1;
+		foreach my $control (@control_list) {
+			my $mean;
+			my $stddev;
+			my $count;
+			next
+			  if ( !defined( $gprs[0]->get_data($control) ) );
+			push @controls, $control;
 
-	$self->{worksheet} = $EXCEL->add_worksheet('Correlation');
-	$col = $row = 0;
+			foreach my $gpr (@gprs) {
+				foreach my $key ( $gpr->get_row_data($control) ) {
+					$mean += $key->{$signal};
+					$count++;
+				}
+			}
+			next if ( !$count );
+			$mean /= $count;
+
+			foreach my $gpr (@gprs) {
+				foreach my $key ( $gpr->get_row_data($control) ) {
+					$stddev += ( $key->{$signal} - $mean )**2;
+				}
+				$stddev = sqrt( $stddev / $count );
+			}
+			my $cv = $stddev / $mean;
+			$current_worksheet->write( $row++, $col, [ "$mean", "$stddev", "$cv" ] );
+		}
+
+		# found the mean for the various control types. Now do the same for all
+		# the peptides
+		my ( $mean, $stddev, $cv, $count );
+
+		foreach my $gpr (@gprs) {
+			foreach my $key ( $gpr->get_keys() ) {
+				$mean += $gpr->get_datum($key)->{$signal};
+				$count++;
+			}
+		}
+		next if ( !$count );
+		$mean /= $count;
+
+		foreach my $gpr (@gprs) {
+			foreach my $key ( $gpr->get_keys() ) {
+				$stddev += ( $gpr->get_datum($key)->{$signal} - $mean )**2;
+			}
+			$stddev = sqrt( $stddev / $count );
+		}
+		$cv = $stddev / $mean;
+		$current_worksheet->write( $row++, $col, [ "$mean", "$stddev", "$cv" ] );
+		$col += 3;
+	}
+	$col = 0;
+	$row = 1;
+	foreach ( unique(@controls) ) {
+		$current_worksheet->write( $row++, $col, $_ );
+	}
+	$current_worksheet->write( $row, $col, "Signal" );
+
+	$current_worksheet = $EXCEL->add_worksheet('Correlation');
+	$col               = $row = 0;
 
 	# Correlation calculations
 
-	$self->{worksheet}->write( $row++, $col,
+	$current_worksheet->write( $row++, $col,
 		[ "File 1", "File 2", "Correlation", "R-squared" ] );
 	my ($mean) = @mean;
+
 	#print $mean. "\n";
 	foreach my $i ( 0 .. $#gprs - 1 ) {
 		my $gpr1 = $gprs[$i];
@@ -694,72 +882,76 @@ sub RunClicked {
 			my $r;
 			my $gpr2 = $gprs[$j];
 			foreach my $key (@peptides) {
-				if (   defined( $gpr1->{"peptides"}->{$key} )
-					&& defined( $gpr2->{"peptides"}->{$key} ) )
+				if (   defined( $gpr1->get_datum($key) )
+					&& defined( $gpr2->get_datum($key) ) )
 				{
-					if (   $gpr1->{"peptides"}->{$key}->{$mean} >= 0
-						&& $gpr2->{"peptides"}->{$key}->{$mean} >= 0 )
+					if (   $gpr1->get_datum($key)->{$mean} >= 0
+						&& $gpr2->get_datum($key)->{$mean} >= 0 )
 					{
 						$count++;
 						$r += (
 							(
-								$gpr1->{"peptides"}->{$key}->{$mean} -
-								  $gprs_stats_cache{ $gpr1->{"file"} . "-"
+								$gpr1->get_datum($key)->{$mean} -
+								  $gprs_stats_cache{ $gpr1->get_filename() . "-"
 									  . $mean }->{"mean"}
-							) /
-							  $gprs_stats_cache{ $gpr1->{"file"} . "-" . $mean }
-							  ->{"stddev"}
+							) / $gprs_stats_cache{ $gpr1->get_filename() . "-"
+								  . $mean }->{"stddev"}
 						  ) * (
 							(
-								$gpr2->{"peptides"}->{$key}->{$mean} -
-								  $gprs_stats_cache{ $gpr2->{"file"} . "-"
+								$gpr2->get_datum($key)->{$mean} -
+								  $gprs_stats_cache{ $gpr2->get_filename() . "-"
 									  . $mean }->{"mean"}
-							) /
-							  $gprs_stats_cache{ $gpr2->{"file"} . "-" . $mean }
-							  ->{"stddev"}
+							) / $gprs_stats_cache{ $gpr2->get_filename() . "-"
+								  . $mean }->{"stddev"}
 						  );
 					}
 				}
 			}
 			$r /= $count if ( $count > 0 );
-			$self->{worksheet}->write( $row++, $col,
-				[ $gpr1->{"file"}, $gpr2->{"file"}, $r, $r**2, $mean ] );
+			$current_worksheet->write(
+				$row++,
+				$col,
+				[
+					$gpr1->get_filename(), $gpr2->get_filename(), $r, $r**2,
+					$mean
+				]
+			);
 		}
 	}
 
-	$self->{worksheet} = $EXCEL->add_worksheet('Slide Density Data');
-	$self->{worksheet}->hide();
+	$current_worksheet = $EXCEL->add_worksheet('Slide Density Data');
+	$current_worksheet->hide();
 	my $max = 0;   # what is the max array size so that the index can be created
 	my $col = 1;
 	foreach my $i ( 0 .. $#gprs ) {
 		my $gpr = $gprs[$i];
 		foreach my $j ( 0 .. $#mean ) {
 			my $mean = $mean[$j];
-			$self->{worksheet}->write( 0, $col, $gpr->{"file"} . " " . $mean );
+			$current_worksheet->write( 0, $col,
+				$gpr->get_filename() . " " . $mean );
 			my @density;
-			foreach my $key ( keys %{ $gpr->{"peptides"} } ) {
+			foreach my $key ( $gpr->get_keys() ) {
 				$density[
-				  int(
-					  10 * log_base( 10, $gpr->{"peptides"}->{$key}->{$mean} ) )
-				]++;
+				  int( 10 * log_base( 10, $gpr->get_datum($key)->{$mean} ) ) ]
+				  ++;
 			}
-			$self->{worksheet}->write( 1, $col, [ \@density ] );
+			$current_worksheet->write( 1, $col, [ \@density ] );
 			$max = max( $max, scalar $#density );
 			my $graph = $EXCEL->add_chart( type => 'column', embedded => 1 );
 			my ( $x_name, $y_name );
-			$x_name = $y_name = '=' . $self->{worksheet}->get_name() . '!';
+			$x_name = $y_name = '=' . $current_worksheet->get_name() . '!';
 			$x_name .=
-			    col_to_ref( xl_rowcol_to_cell( 1,    0 ) ) . ':'
+			    col_to_ref( xl_rowcol_to_cell( 1, 0 ) ) . ':'
 			  . col_to_ref( xl_rowcol_to_cell( $max, 0 ) );
 			$y_name .=
-			    col_to_ref( xl_rowcol_to_cell( 1,    $col ) ) . ':'
+			    col_to_ref( xl_rowcol_to_cell( 1, $col ) ) . ':'
 			  . col_to_ref( xl_rowcol_to_cell( $max, $col ) );
 
-			$graph->set_title( name => $gpr->{"file"} . " " . $mean );
+			$graph->set_title( name => $gpr->get_filename() . " " . $mean );
 			$graph->set_x_axis( name => 'Log10 Signal' );
 			$graph->set_y_axis( name => 'Count' );
 			$graph->add_series(
-				name       => $gpr->{"file"} . " " . $mean,
+				name       => $gpr->get_filename() . " " . $mean,
 				categories => $x_name,
 				values     => $y_name,
 			);
@@ -772,25 +964,25 @@ sub RunClicked {
 	foreach my $gpr (@gprs) {
 		foreach my $control ( keys %{ $gpr->{"controls"} } ) {
 			my @density;
-			$self->{worksheet}
-			  ->write( 0, $col, $gpr->{"file"} . " " . $control );
+			$current_worksheet->write( 0, $col,
+				$gpr->{"file"} . " " . $control );
 			foreach ( @{ $gpr->{"controls"}->{$control} } ) {
 				$density[ int( 10 * log_base( 10, $_->{$mean} ) ) ]++;
 			}
 			$max = max( $max, scalar $#density );
-			$self->{worksheet}->write( 1, $col, [ \@density ] );
+			$current_worksheet->write( 1, $col, [ \@density ] );
 			my $graph = $EXCEL->add_chart(
 				name     => "A$i",
 				type     => 'column',
 				embedded => 1
 			);
 			my ( $x_name, $y_name );
-			$x_name = $y_name = '=' . $self->{worksheet}->get_name() . '!';
+			$x_name = $y_name = '=' . $current_worksheet->get_name() . '!';
 			$x_name .=
-			    col_to_ref( xl_rowcol_to_cell( 1,    0 ) ) . ':'
+			    col_to_ref( xl_rowcol_to_cell( 1, 0 ) ) . ':'
 			  . col_to_ref( xl_rowcol_to_cell( $max, 0 ) );
 			$y_name .=
-			    col_to_ref( xl_rowcol_to_cell( 1,    $col ) ) . ':'
+			    col_to_ref( xl_rowcol_to_cell( 1, $col ) ) . ':'
 			  . col_to_ref( xl_rowcol_to_cell( $max, $col ) );
 
 			$graph->set_title( name => $gpr->{"file"} . " " . $control );
@@ -806,13 +998,19 @@ sub RunClicked {
 		}
 	}
 	foreach ( 0 .. $max ) {
-		$self->{worksheet}->write( $_ + 1, 0, $_ / 10 );
+		$current_worksheet->write( $_ + 1, 0, $_ / 10 );
 	}
 	foreach ( 0 .. $#graphs ) {
 		$graphsheet->insert_chart(
 			xl_rowcol_to_cell( 20 * int( $_ / 5 ), 9 * ( $_ % 5 ) ),
 			$graphs[$_] );
 	}
+
+	my $result = "Testing";
+
+	my $threvent = new Wx::PlThreadEvent( -1, $DONE_EVENT, $result );
+	print ref($threvent);
+	Wx::PostEvent( $parameters->{-window}, $threvent );
 }
 
 =head1 C<inlist>
@@ -908,6 +1106,7 @@ comparing this GPR to the others
 
 sub files {
 	$_ = shift @_;
+
 	#print "$_\n";
 	return if ( $_ !~ /\.gpr$/ );
 
@@ -1003,6 +1202,6 @@ sub files {
 	%peptides        = %temp;
 	$gpr{"controls"} = \%controls;
 	$gpr{"peptides"} = \%peptides;
-	push @gprs, \%gpr;
+	return \%gpr;
 }
 1;
