@@ -4,91 +4,27 @@ use GDS2;
 use List::Util qw(max min);
 use List::MoreUtils qw/ uniq /;
 
-my $file =
-  'Mask Holes 330K.txt'
-  ;    # name of the input file for which holes are on which mask
-my $qc_file = 'QC Mask Holes 1254.txt';  # name of the QC region mask input file
+my $file    = shift;
+my @spacing =
+  ( 300, 259.8075, 75, 64.9519, 13, 11.25833 )
+  ;    # horizontal and vertical spacing of the spots
+my @mag = ( 25, 12.5, 1 );
 
-my @spacing = ( 13, 11.25833 );   # horizontal and vertical spacing of the spots
 my @area =
   ( 6482.080, 7475.220 )
   ;    # total area that the peptides should cover (width, height)
 
-my @qc_area    = ( 10000, 10000 );
-my @qc_spacing = ( 300,   259.80762 );
 my $orange = 1;    # are these supposed to be orange-crated or box
-my $offset = 6.5
-  ; # if the peptides are orange-crated, how far in should the even rows be. This value is half the horizontal spacing as they are supposed to create equilateral triangles from the peptide spots
 
-my $qc_offset = 150;
+# if the peptides are orange-crated, how far in should the even rows be.
+# This value is half the horizontal spacing as they are supposed to create
+# equilateral triangles from the peptide spots
+my @offset = ( 150, 37.5, 6.5 );
 
-my ( $min, $max ) = ( 1, 1 );
-
-my @qc_locations = (
-	[ -93900, -35000 ],
-	[ -93900, -25000 ],
-	[ -93900, -15000 ],
-	[ -93900, -5000 ],
-	[ -93900, 5000 ],
-	[ -93900, 15000 ],
-	[ -93900, 25000 ],
-	[ -93900, 35000 ],
-	[ -78500, -53100 ],
-	[ -78500, -43100 ],
-	[ -78500, 43100 ],
-	[ -78500, 53100 ],
-	[ -68500, -63100 ],
-	[ -68500, -53100 ],
-	[ -68500, -43100 ],
-	[ -68500, 43100 ],
-	[ -68500, 53100 ],
-	[ -68500, 63100 ],
-	[ -43100, -81200 ],
-	[ -43100, 81200 ],
-	[ -30000, -93900 ],
-	[ -30000, 93900 ],
-	[ -20000, -93900 ],
-	[ -20000, 93900 ],
-	[ -10000, -93900 ],
-	[ -10000, 93900 ],
-	[ 0,      -93900 ],
-	[ 0,      93900 ],
-	[ 10000,  -93900 ],
-	[ 10000,  93900 ],
-	[ 20000,  -93900 ],
-	[ 20000,  93900 ],
-	[ 30000,  -93900 ],
-	[ 30000,  93900 ],
-	[ 43100,  -81200 ],
-	[ 43100,  81200 ],
-	[ 68500,  -63100 ],
-	[ 68500,  -53100 ],
-	[ 68500,  -43100 ],
-	[ 68500,  43100 ],
-	[ 68500,  53100 ],
-	[ 68500,  63100 ],
-	[ 78500,  -53100 ],
-	[ 78500,  -43100 ],
-	[ 78500,  43100 ],
-	[ 78500,  53100 ],
-	[ 93900,  -35300 ],
-	[ 93900,  -25300 ],
-	[ 93900,  -15300 ],
-	[ 93900,  -5300 ],
-	[ 93900,  5000 ],
-	[ 93900,  15000 ],
-	[ 93900,  25000 ],
-	[ 93900,  35000 ]
-);
-
-my @peptides
-  ; # an array to hold reference arrays of which masks each peptide spot uses (spots are just the numeric index of the main array)
-my @masks
-  ; # on each mask which spots should be opened up in this design. This is a reverse map of the @peptides array
-
-if ( !$orange ) { $offset = 0; $qc_offset = 0; }
-
-# create the GDS library. Interestingly, this doesn't delete the file if it already exists, but just overwrites the data in the file at the binary level. Useful when just needing to adjust a few parameters in the header areas of the lib.
+# create the GDS library. Interestingly, this doesn't delete the file if it
+# already exists, but just overwrites the data in the file at the binary level.
+# Useful when just needing to adjust a few parameters in the header areas of
+# the lib.
 my $gds2file = new GDS2( -fileName => ">test.gds" );
 
 # don't forget to ->printEndlib() <-- note the lower 'l'
@@ -120,7 +56,8 @@ $gds2file->printEndstr();
 
 # Finished creating the spot feature
 
-# create a default 1um box that can be scaled, arrayed, etc... in other parts of the library
+# create a default 1um box that can be scaled, arrayed, etc... in other parts
+# of the library
 $gds2file->printBgnstr( -name => "1um_box" );
 $gds2file->printBoundary(
 	-layer => 4,
@@ -130,7 +67,9 @@ $gds2file->printEndstr();
 
 # finished creating the 1um box
 
-# create the auto alignment mark for the OAI Autoalignment system. the exposed mark is a series of arrow heads that should surround a diamond etched into the wafer.
+# create the auto alignment mark for the OAI Autoalignment system. the exposed
+# mark is a series of arrow heads that should surround a diamond etched into
+# the wafer.
 $gds2file->printBgnstr( -name => "auto_align_arrow" );
 $gds2file->printBoundary(
 	-layer => 4,
@@ -222,124 +161,50 @@ $gds2file->printEndstr();
 
 # Finished creating the manual alignment mark
 
-@peptides = ();
-@masks    = ();
-open FH, $qc_file;
-while ( my $line = <FH> ) {
-	chomp($line);
-	my @data = sort { $a <=> $b } uniq( split( /,/, $line ) );
-	push @peptides, \@data;
-	$min = min( $min, $data[0] );
-	$max = max( $max, $data[$#data] );
-}
-
-print @peptides . "\n";
-
-# determine the limit of the number of rows and columns that the area can hold. Really only the number of columns is used in later steps. Should consider throwing an error if the number of spots exceeds the allowed spacing
-my $rows    = int( $qc_area[1] / $qc_spacing[1] );
-my $columns = int( $qc_area[0] / $qc_spacing[0] );
-
-print "$rows\t$columns\n";
-
-$gds2file->printBgnstr( -name => sprintf( "%s", 'qc_mask_all' ) );
-
-for ( my $spot = 0 ; $spot < $rows * $columns ; $spot++ ) {
-	my $x = int( $spot % $columns ) * $qc_spacing[0];
-	$x += +$qc_offset if ( int( $spot / $columns ) % 2 );
-	my $y = -1 * int( $spot / $columns ) * $qc_spacing[1];
-	$gds2file->printSref(
-		-name => "spot",
-		-xy   => [ $x, $y ],
-		-mag  => 25
-	);
-}
-
-$gds2file->printEndstr();
-
-$gds2file->printBgnstr( -name => sprintf( "%s", 'qc_chip_all' ) );
-$gds2file->printSref(
-	-name => sprintf( "%s",      'qc_mask_all' ),
-	-xy   => [ -$qc_area[0] / 2, $qc_area[1] / 2 ]
+# create the chip alignment marks for MALDI
+$gds2file->printBgnstr( -name => "align_triangle" );
+$gds2file->printBoundary(
+	-layer => 4,
+	-xy    => [ 0, 100, 75, -100, -75, -100, 0, 100 ]
 );
 $gds2file->printEndstr();
 
-foreach my $i ( 0 .. $#peptides ) {
-	foreach my $mask ( @{ $peptides[$i] } ) {
-		push @{ $masks[ $mask - $min ] }, $i if ( $mask =~ /^[\d]+$/ );
-	}
-}
-
-my $count = 0;
-foreach my $mask (@masks) {
-	if ( defined($mask) ) {
-		print "$count\n";
-		if ( @{$mask} > 0 ) {
-
-			# draw each mask layer with the needed spots based on the input file
-			$gds2file->printBgnstr(
-				-name => sprintf( "%s%03d", 'qc_mask_', $count ) );
-
-			foreach my $spot ( @{$mask} ) {
-				my $x = int( $spot % $columns ) * $qc_spacing[0];
-				$x += +$qc_offset if ( int( $spot / $columns ) % 2 );
-				my $y = -1 * int( $spot / $columns ) * $qc_spacing[1];
-				$gds2file->printSref(
-					-name => "spot",
-					-xy   => [ $x, $y ],
-					-mag  => 25
-				);
-			}
-
-			$gds2file->printEndstr();
-
-			# done drawing the mask for this layer
-
-# laying down the mask onto the "chip" area of the design. this centers the layout.
-			$gds2file->printBgnstr(
-				-name => sprintf( "%s%03d", 'qc_chip_', $count ) );
-			$gds2file->printSref(
-				-name => sprintf( "%s%03d",  'qc_mask_', $count ),
-				-xy   => [ -$qc_area[0] / 2, $qc_area[1] / 2 ]
-			);
-			$gds2file->printEndstr();
-
-			# end of placing the mask on the chip.
-
-		}
-	}
-	$count++;
-}
-
-@peptides = ();
-@masks    = ();
-
-# determine the limit of the number of rows and columns that the area can hold. Really only the number of columns is used in later steps. Should consider throwing an error if the number of spots exceeds the allowed spacing
-my $rows    = int( $area[1] / $spacing[1] );
-my $columns = int( $area[0] / $spacing[0] );
-
-print "$rows\t$columns\n";
-
-$gds2file->printBgnstr( -name => sprintf( "%s", 'mask_all' ) );
-
-for ( my $spot = 0 ; $spot < $rows * $columns ; $spot++ ) {
-	my $x = int( $spot % $columns ) * $spacing[0];
-	$x += +$offset if ( int( $spot / $columns ) % 2 );
-	my $y = -1 * int( $spot / $columns ) * $spacing[1];
-	$gds2file->printSref( -name => "spot", -xy => [ $x, $y ] );
-}
-
-$gds2file->printEndstr();
-
-$gds2file->printBgnstr( -name => sprintf( "%s", 'chip_all' ) );
-$gds2file->printSref(
-	-name => sprintf( "%s",   'mask_all' ),
-	-xy   => [ -$area[0] / 2, $area[1] / 2 ]
+$gds2file->printBgnstr( -name => "align_diamond" );
+$gds2file->printBoundary(
+	-layer => 4,
+	-xy    => [ 0, 100, 75, 0, 0, -100, -75, 0, 0, 100 ]
 );
 $gds2file->printEndstr();
 
-$gds2file->printBgnstr( -name => sprintf( "%s", 'slide_all' ) );
+$gds2file->printBgnstr( -name => "align_cross" );
+$gds2file->printBoundary(
+	-layer => 4,
+	-xy    => [
+		-15, 100, 15,  100,  15,  15,   75,  15,  75,  -15,
+		15,  -15, 15,  -100, -15, -100, -15, -15, -75, -15,
+		-75, 15,  -15, 15,   -15, 75
+	]
+);
+$gds2file->printEndstr();
+
+$gds2file->printBgnstr( -name => "align_chip" );
+$gds2file->printSref(
+	-name => "align_triangle",
+	-xy   => [ -$area[0] / 2 - 100, $area[1] / 2 - 100 ]
+);
+$gds2file->printSref(
+	-name => "align_diamond",
+	-xy   => [ $area[0] / 2 + 100, $area[1] / 2 - 100 ]
+);
+$gds2file->printSref(
+	-name => "align_cross",
+	-xy   => [ -$area[0] / 2 - 100, -$area[1] / 2 + 100 ]
+);
+$gds2file->printEndstr();
+
+$gds2file->printBgnstr( -name => "align_slide" );
 $gds2file->printAref(
-	-name => sprintf( "%s", 'chip_all' ),
+	-name => "align_chip",
 	-xy   => [
 		-8056.880,                -31497.27,
 		3 * 8031.480 + -8056.880, -31497.27,
@@ -350,18 +215,16 @@ $gds2file->printAref(
 );
 $gds2file->printEndstr();
 
-# done laying out the chips on the slide for this layer.
-
 # create the overall layer with the slides and alignment marks and QC spots
-$gds2file->printBgnstr( -name => sprintf( "%s", 'layer_all' ) );
+$gds2file->printBgnstr( -name => "align_layer" );
 $gds2file->printAref(
-	-name => sprintf( "%s", 'slide_all' ),
-	-xy => [ -76200.000, 0, 2 * 152400.000 + -76200.000, 0, -76200.000, 0 ],
+	-name => "align_slide",
+	-xy   => [ -76200.000, 0, 2 * 152400.000 + -76200.000, 0, -76200.000, 0 ],
 	-columns => 2,
 	-rows    => 1
 );
 $gds2file->printAref(
-	-name => sprintf( "%s", 'slide_all' ),
+	-name => "align_slide",
 	-xy   => [
 		-50800.000,                  38100.000,
 		2 * 101600.000 + -50800.000, 38100.000,
@@ -371,11 +234,11 @@ $gds2file->printAref(
 	-rows    => 2
 );
 $gds2file->printAref(
-	-name => sprintf( "%s", 'slide_all' ),
+	-name    => "align_slide",
 	-xy      => [ 0, -76200.000, 0, 7 * 25400 - 76200, 0, -76200.000 ],
 	-columns => 7,
 	-rows    => 1,
-	-angle   => 90,
+	-angle   => 270,
 );
 
 $gds2file->printSref(
@@ -394,58 +257,22 @@ $gds2file->printSref(
 	-name => "align_exposure_manual",
 	-xy   => [ 55550.000, 0 ]
 );
-
-foreach my $xy (@qc_locations) {
-	$gds2file->printSref(
-		-name => sprintf( "%s", 'qc_chip_all' ),
-		-xy   => $xy
-	);
-}
-
 $gds2file->printEndstr();
 
-# create the overall layer with the slides and alignment marks and QC spots
-$gds2file->printBgnstr( -name => sprintf( "%s", 'layer_qc_only' ) );
-$gds2file->printSref(
-	-name => "align_exposure_auto",
-	-xy   => [ -88900.000, 0 ]
-);
-$gds2file->printSref(
-	-name => "align_exposure_auto",
-	-xy   => [ 88900.000, 0 ]
-);
-$gds2file->printSref(
-	-name => "align_exposure_manual",
-	-xy   => [ -55550.000, 0 ]
-);
-$gds2file->printSref(
-	-name => "align_exposure_manual",
-	-xy   => [ 55550.000, 0 ]
-);
+# Finished writing the actual mask layer
 
-foreach my $xy (@qc_locations) {
-	$gds2file->printSref(
-		-name => sprintf( "%s", 'qc_chip_all' ),
-		-xy   => $xy
-	);
-}
+# determine the limit of the number of rows and columns that the area can hold.
+# Really only the number of columns is used in later steps. Should consider
+# throwing an error if the number of spots exceeds the allowed spacing
 
-$gds2file->printEndstr();
-
+my @masks;
 open FH, $file;
+my $count =0;
 while ( my $line = <FH> ) {
 	chomp($line);
 	my @data = sort { $a <=> $b } uniq( split( /,/, $line ) );
-	push @peptides, \@data;
-	$min = min( $min, $data[0] );
-	$max = max( $max, $data[$#data] );
-}
-
-print @peptides . "\n";
-
-foreach my $i ( 0 .. $#peptides ) {
-	foreach my $mask ( @{ $peptides[$i] } ) {
-		push @{ $masks[ $mask - $min ] }, $i if ( $mask =~ /^[\d]+$/ );
+	foreach (@data){
+		push @{$masks[$_]},$count;
 	}
 }
 
@@ -453,17 +280,31 @@ my $count = 0;
 foreach my $mask (@masks) {
 	if ( defined($mask) ) {
 		print "$count\n";
-		if ( @{$mask} > 0 ) {
+
+		my @space = (
+			$spacing[ 2*int( ( $count % 24 ) / 9 ) ],
+			$spacing[ 2*int( ( $count % 24 ) / 9 ) + 1 ]
+		);
+
+		my $rows    = int( $area[1] / $space[1] );
+		my $columns = int( $area[0] / $space[0] );
+
+		if ( @{$mask} >= 0 ) {
 
 			# draw each mask layer with the needed spots based on the input file
 			$gds2file->printBgnstr(
-				-name => sprintf( "%s%03d", 'mask', $count ) );
+				-name => sprintf( " % s%03d", 'mask', $count ) );
 
 			foreach my $spot ( @{$mask} ) {
-				my $x = int( $spot % $columns ) * $spacing[0];
-				$x += +$offset if ( int( $spot / $columns ) % 2 );
-				my $y = -1 * int( $spot / $columns ) * $spacing[1];
-				$gds2file->printSref( -name => "spot", -xy => [ $x, $y ] );
+				my $x = int( $spot % $columns ) * $space[0];
+				$x += $offset[ int( ( $count % 24 ) / 9 ) ]
+				  if ( int( $spot / $columns ) % 2 );
+				my $y = -1 * int( $spot / $columns ) * $space[1];
+				$gds2file->printSref(
+					-name => "spot",
+					-xy   => [ $x, $y ],
+					-mag  => $mag[ int( ( $count % 24 ) / 9 ) ]
+				);
 			}
 
 			$gds2file->printEndstr();
@@ -481,87 +322,77 @@ foreach my $mask (@masks) {
 
 			# end of placing the mask on the chip.
 
-			# array the chips onto the slide layout
-			$gds2file->printBgnstr(
-				-name => sprintf( "%s%03d", 'slide', $count ) );
-			$gds2file->printAref(
-				-name => sprintf( "%s%03d", 'chip', $count ),
-				-xy   => [
-					-8056.880,                -31497.27,
-					3 * 8031.480 + -8056.880, -31497.27,
-					-8056.880,                8 * 8999.220 + -31497.27
-				],
-				-columns => 3,
-				-rows    => 8
-			);
-			$gds2file->printEndstr();
-
-			# done laying out the chips on the slide for this layer.
-
-	 # create the overall layer with the slides and alignment marks and QC spots
-			$gds2file->printBgnstr(
-				-name => sprintf( "%s%03d", 'layer', $count ) );
-			$gds2file->printAref(
-				-name => sprintf( "%s%03d", 'slide', $count ),
-				-xy   => [
-					-76200.000,                  0,
-					2 * 152400.000 + -76200.000, 0,
-					-76200.000,                  0
-				],
-				-columns => 2,
-				-rows    => 1
-			);
-			$gds2file->printAref(
-				-name => sprintf( "%s%03d", 'slide', $count ),
-				-xy   => [
-					-50800.000,                  38100.000,
-					2 * 101600.000 + -50800.000, 38100.000,
-					-50800.000,                  2 * -76200.000 + 38100.000
-				],
-				-columns => 2,
-				-rows    => 2
-			);
-			$gds2file->printAref(
-				-name => sprintf( "%s%03d", 'slide', $count ),
-				-xy => [ 0, -76200.000, 0, 7 * 25400 - 76200, 0, -76200.000 ],
-				-columns => 7,
-				-rows    => 1,
-				-angle   => 90,
-			);
-
-			$gds2file->printSref(
-				-name => "align_exposure_auto",
-				-xy   => [ -88900.000, 0 ]
-			);
-			$gds2file->printSref(
-				-name => "align_exposure_auto",
-				-xy   => [ 88900.000, 0 ]
-			);
-			$gds2file->printSref(
-				-name => "align_exposure_manual",
-				-xy   => [ -55550.000, 0 ]
-			);
-			$gds2file->printSref(
-				-name => "align_exposure_manual",
-				-xy   => [ 55550.000, 0 ]
-			);
-
-			if ( $count < 142 ) {
-				foreach my $xy (@qc_locations) {
-					$gds2file->printSref(
-						-name => sprintf( "%s%03d", 'qc_chip_', $count ),
-						-xy   => $xy
-					);
-				}
-			}
-
-			$gds2file->printEndstr();
-
-			# Finished writing the actual mask layer
 		}
 	}
 	$count++;
 }
+
+# array the chips onto the slide layout
+for ( my $i = 0 ; $i < @masks / 24 ; $i++ ) {
+	$gds2file->printBgnstr( -name => sprintf( "%s%03d", 'slide', $i ) );
+	for ( my $j = 0 ; $j < 24 ; $j++ ) {
+		if ( defined( $masks[ $i * 24 + $j ] ) ) {
+			printf( "laying out chip: %03d\n", $i * 24 + $j );
+			$gds2file->printSref(
+				-name => sprintf( "%s%03d", 'chip', $i * 24 + $j ),
+				-xy   => [
+					-8056.880 + ( $j % 3 ) * 8031.480,
+					-31497.27 + ( $j % 8 ) * 8999.220
+				],
+			);
+		}
+	}
+	$gds2file->printEndstr();
+
+	# done laying out the chips on the slide for this layer.
+
+	# create the overall layer with the slides and alignment marks and QC spots
+	$gds2file->printBgnstr( -name => sprintf( "%s%03d", 'layer', $i ) );
+	$gds2file->printAref(
+		-name => sprintf( "%s%03d", 'slide', $i ),
+		-xy => [ -76200.000, 0, 2 * 152400.000 + -76200.000, 0, -76200.000, 0 ],
+		-columns => 2,
+		-rows    => 1
+	);
+	$gds2file->printAref(
+		-name => sprintf( "%s%03d", 'slide', $i ),
+		-xy   => [
+			-50800.000,                  38100.000,
+			2 * 101600.000 + -50800.000, 38100.000,
+			-50800.000,                  2 * -76200.000 + 38100.000
+		],
+		-columns => 2,
+		-rows    => 2
+	);
+	$gds2file->printAref(
+		-name => sprintf( "%s%03d", 'slide', $i ),
+		-xy      => [ 0, -76200.000, 0, 7 * 25400 - 76200, 0, -76200.000 ],
+		-columns => 7,
+		-rows    => 1,
+		-angle   => 270,
+	);
+
+	$gds2file->printSref(
+		-name => "align_exposure_auto",
+		-xy   => [ -88900.000, 0 ]
+	);
+	$gds2file->printSref(
+		-name => "align_exposure_auto",
+		-xy   => [ 88900.000, 0 ]
+	);
+	$gds2file->printSref(
+		-name => "align_exposure_manual",
+		-xy   => [ -55550.000, 0 ]
+	);
+	$gds2file->printSref(
+		-name => "align_exposure_manual",
+		-xy   => [ 55550.000, 0 ]
+	);
+
+	$gds2file->printEndstr();
+}
+
+# Finished writing the actual mask layer
 
 # ending the library
 $gds2file->printEndlib();
