@@ -8,7 +8,7 @@ my $file    = shift;
 my @spacing =
   ( 300, 259.8075, 75, 64.9519, 13, 11.25833 )
   ;    # horizontal and vertical spacing of the spots
-my @mag = ( 25, 12.5, 1 );
+my @mag = ( 25, 6.25, 1 );
 
 my @area =
   ( 6482.080, 7475.220 )
@@ -267,13 +267,14 @@ $gds2file->printEndstr();
 
 my @masks;
 open FH, $file;
-my $count =0;
+my $count = 0;
 while ( my $line = <FH> ) {
 	chomp($line);
-	my @data = sort { $a <=> $b } uniq( split( /,/, $line ) );
-	foreach (@data){
-		push @{$masks[$_]},$count;
+	my @data = split( /,/, $line );
+	foreach (@data) {
+		push @{$masks[$_]}, $count;
 	}
+	$count++;
 }
 
 my $count = 0;
@@ -282,18 +283,19 @@ foreach my $mask (@masks) {
 		print "$count\n";
 
 		my @space = (
-			$spacing[ 2*int( ( $count % 24 ) / 9 ) ],
-			$spacing[ 2*int( ( $count % 24 ) / 9 ) + 1 ]
+			$spacing[ 2 * int( ( $count % 24 ) / 9 ) ],
+			$spacing[ 2 * int( ( $count % 24 ) / 9 ) + 1 ]
 		);
 
 		my $rows    = int( $area[1] / $space[1] );
 		my $columns = int( $area[0] / $space[0] );
 
-		if ( @{$mask} >= 0 ) {
-
+		if ( @{$mask} > 0 ) {
+			print scalar @{$mask} . "\n";
+			print int( ( $count % 24 ) / 9 )."\n";
 			# draw each mask layer with the needed spots based on the input file
 			$gds2file->printBgnstr(
-				-name => sprintf( " % s%03d", 'mask', $count ) );
+				-name => sprintf( "%s%03d", 'mask', $count ) );
 
 			foreach my $spot ( @{$mask} ) {
 				my $x = int( $spot % $columns ) * $space[0];
@@ -336,8 +338,8 @@ for ( my $i = 0 ; $i < @masks / 24 ; $i++ ) {
 			$gds2file->printSref(
 				-name => sprintf( "%s%03d", 'chip', $i * 24 + $j ),
 				-xy   => [
-					-8056.880 + ( $j % 3 ) * 8031.480,
-					-31497.27 + ( $j % 8 ) * 8999.220
+					-8056.880 + int( $j % 3 ) * 8031.480,
+					31497.27 - int( $j / 3 ) * 8999.220
 				],
 			);
 		}
