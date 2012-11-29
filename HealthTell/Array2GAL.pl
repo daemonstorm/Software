@@ -8,7 +8,8 @@ use Getopt::Long;
 my $mask_use = 'HTChipv4-45.txt';
 my $mask_version = 4;    # the default version to design the GAL files for
 
-my ( $script, $script_dir ) = fileparse(__FILE__);
+my ( $script, $script_dir ) = fileparse($ENV{PAR_0});
+print "$script_dir\n";
 
 my ( $help, $verbose );
 
@@ -49,10 +50,10 @@ else {
 sub array_v4 {
 
 	my $file =
-	  sprintf( '%s../v4/%s', $script_dir, 'Mask Holes 330K.txt' )
+	  sprintf( '%sinc/v4/%s', $script_dir, 'Mask Holes 330K.txt' )
 	  ;    # name of the input file for which holes are on which mask
 	my $qc_file =
-	  sprintf( '%s../v4/%s', $script_dir, 'QC Mask Holes 1254.txt' )
+	  sprintf( '%sinc/v4/%s', $script_dir, 'QC Mask Holes 1254.txt' )
 	  ;    # name of the QC region mask input file
 
 	my @output =
@@ -180,7 +181,7 @@ WaferProcess=' . $basename . "\n";
 
 sub array_v6 {
 	my $file =
-	  sprintf( '%s../v6/%s', $script_dir, 'Mask Holes 330K.txt' )
+	  sprintf( '%sinc/v6/%s', $script_dir, 'Mask Holes 330K.txt' )
 	  ;    # name of the input file for which holes are on which mask
 
 	my @spacing =
