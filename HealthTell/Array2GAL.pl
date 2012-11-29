@@ -15,8 +15,8 @@ my ( $help, $verbose );
 GetOptions(
 	"process=s" => \$mask_use,
 	"version=i" => \$mask_version,
-	"help"      => \$help,
-	"verbose+"  => $verbose,
+#	"help"      => \$help,
+#	"verbose+"  => $verbose,
 );
 
 if ( $mask_use eq '' || !-e $mask_use ) {
@@ -49,10 +49,10 @@ else {
 sub array_v4 {
 
 	my $file =
-	  sprintf( '%sv4/%s', $script_dir, 'Mask Holes 330K.txt' )
+	  sprintf( '%s../v4/%s', $script_dir, 'Mask Holes 330K.txt' )
 	  ;    # name of the input file for which holes are on which mask
 	my $qc_file =
-	  sprintf( '%sv4/%s', $script_dir, 'QC Mask Holes 1254.txt' )
+	  sprintf( '%s../v4/%s', $script_dir, 'QC Mask Holes 1254.txt' )
 	  ;    # name of the QC region mask input file
 
 	my @output =
@@ -72,7 +72,7 @@ sub array_v4 {
 	my @masks
 	  ; # on each mask which spots should be opened up in this design. This is a reverse map of the @peptides array
 
-	open FH, $qc_file;
+	open FH, $qc_file or die("Could not open QC file for reading\n");
 	while ( my $line = <FH> ) {
 		chomp($line);
 		my @data = sort { $a <=> $b } uniq( split( /,/, $line ) );
@@ -124,7 +124,7 @@ WaferProcess=' . $basename . "\n";
 	@peptides = ();
 	@masks    = ();
 
-	open FH, $file;
+	open FH, $file or die("Could not open 330k design file for reading\n");
 	while ( my $line = <FH> ) {
 		chomp($line);
 		my @data = sort { $a <=> $b } uniq( split( /,/, $line ) );
@@ -180,7 +180,7 @@ WaferProcess=' . $basename . "\n";
 
 sub array_v6 {
 	my $file =
-	  sprintf( '%sv6/%s', $script_dir, 'Mask Holes 330K.txt' )
+	  sprintf( '%s../v6/%s', $script_dir, 'Mask Holes 330K.txt' )
 	  ;    # name of the input file for which holes are on which mask
 
 	my @spacing =
