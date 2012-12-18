@@ -98,6 +98,31 @@ sub new {
 			[ 40,      20 ],
 		);
 	}
+	
+	Wx::StaticText->new(
+			$panel,       # parent
+			1,            # id
+			"Minor notes:\na = Advantage\ns = Success\nT = Triumph\n",    # label
+			[ 80, 220 ],    # position
+			[ 80, 80 ],
+			&Wx::wxST_NO_AUTORESIZE,
+	);
+	Wx::StaticText->new(
+			$panel,       # parent
+			1,            # id
+			"t = Threat\nf = Failure\nD = Despair",    # label
+			[ 160, 232 ],    # position
+			[ 80, 80 ],
+			&Wx::wxST_NO_AUTORESIZE,
+	);
+	Wx::StaticText->new(
+			$panel,       # parent
+			1,            # id
+			"The success of the Triumph and the failure of the Despair is already accounted for. If the final result shows a Triumph, but not a Success, then the Triumph's Success was cancelled by a Failure\nSame thing for the Despair and its Failure",    # label
+			[ 80, 300 ],    # position
+			[ 240, 80 ],
+			&Wx::wxST_NO_AUTORESIZE,
+	);
 	return $self;
 }
 
