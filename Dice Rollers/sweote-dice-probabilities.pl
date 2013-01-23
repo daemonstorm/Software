@@ -148,8 +148,7 @@ sub make_color {
 }
 
 sub roll_dice {
-	my $self = shift;
-	my @result;
+	my $self         = shift;
 	my $combinations = 1;
 	my @choices;
 	my %stats;
@@ -197,17 +196,14 @@ sub roll_dice {
 		$choices[@choices] = \@FORCE;
 	}
 
-	my $counter = 0;
-	my $divider = $combinations;
-	foreach my $choice (@choices) {
-		$divider = $divider / @{$choice};
-		for ( my $i = 0 ; $i < $combinations ; $i++ ) {
-			$result[$i] .= ${$choice}[ int( $i / $divider ) % @{$choice} ];
-		}
-	}
-	for ( my $i = 0 ; $i < @result ; $i++ ) {
+	for ( my $i = 0 ; $i < $combinations ; $i++ ) {
+		my $divider = $combinations;
 		my $string;
-		my @temp = split( //, $result[$i] );
+		foreach my $choice (@choices) {
+			$divider = $divider / @{$choice};
+			$string .= ${$choice}[ int( $i / $divider ) % @{$choice} ];
+		}
+		my @temp = split( //, $string );
 		my $s    = grep( /s/, @temp );
 		my $f    = grep( /f/, @temp );
 		if ( $s > $f ) {
@@ -243,11 +239,11 @@ sub roll_dice {
 		$stats{$string}++;
 	}
 	my $string =
-	    ( 100 * $stats{""} / scalar(@result) ) . "\t"
-	  . ( 100 * $tally{'Success'} / scalar(@result) ) . "\t"
-	  . ( 100 * $tally{'Failure'} / scalar(@result) ) . "\t"
-	  . ( 100 * $tally{'Advantage'} / scalar(@result) ) . "\t"
-	  . ( 100 * $tally{'Threat'} / scalar(@result) ) . "\n";
+	    ( 100 * $stats{""} / $combinations ) . "\t"
+	  . ( 100 * $tally{'Success'} / $combinations ) . "\t"
+	  . ( 100 * $tally{'Failure'} / $combinations ) . "\t"
+	  . ( 100 * $tally{'Advantage'} / $combinations ) . "\t"
+	  . ( 100 * $tally{'Threat'} / $combinations ) . "\n";
 	$self->{'results'}->SetValue($string);
 	return;
 }
