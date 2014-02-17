@@ -1,4 +1,4 @@
-#!/bin/env perl
+#!/usr/bin/perl
 use strict;
 
 use lib '.';
@@ -6,34 +6,43 @@ use lib '.';
 use HTML::TableExtract;
 use LWP::Simple;
 
-#my $odir         = '/www/www/sites/all/libraries/rpgnowads/rpgnowads.txt';
-my $odir         = 'rpgnowads.txt';
+my $odir = '/home/daemonst/www/www/sites/all/libraries/rpgnowads/rpgnowads.txt';
+
+#my $odir         = 'rpgnowads.txt';
 my $affiliate_id = 'affiliate_id=279284';
 my @output;
 
 my @urls = (
 	{
-		page => "shadowrun",
-		url  => 'http://www.rpgnow.com/index.php?filters=0_0_1720_0_0'
+		page => "catalyst",
+		url  =>
+'http://www.rpgnow.com/includes/ajax/get_view_strip.php?view_strip=slider_view&strip_type=newest&manufacturers_id=44',
 	},
 	{
 		page => "savageworlds",
-		url  => 'http://www.rpgnow.com/index.php?filters=0_0_1600_0_0',
-
-	},
-	{
-		page => "d6system",
-		url  => 'http://www.rpgnow.com/index.php?filters=0_0_10020_0_0'
-	},
-	{
-		page => "l5r",
 		url  =>
-'http://www.rpgnow.com/index.php?manufacturers_id=22&filters=0_0_10109_0_0'
+'http://www.rpgnow.com/includes/ajax/get_view_strip.php?view_strip=slider_view&strip_type=newest&filters=0_0_1600_0_0',
 	},
 	{
-		page => "fiction",
-		url  => 'http://www.rpgnow.com/index.php?filters=41215_41080_41045_0'
-	}
+		page => "old-school-dnd",
+		url  =>
+'http://www.rpgnow.com/includes/ajax/get_view_strip.php?view_strip=slider_view&strip_type=newest&manufacturers_id=44',
+	},
+	{
+		page => "shadowrun",
+		url  =>
+'http://www.rpgnow.com/includes/ajax/get_view_strip.php?view_strip=slider_view&strip_type=newest&filters=0_0_1700_0_0',
+	},
+	{
+		page => "fantasy-flight-games",
+		url  =>
+'http://www.rpgnow.com/includes/ajax/get_view_strip.php?view_strip=slider_view&strip_type=newest&manufacturers_id=6',
+	},
+	{
+		page => "aeg",
+		url  =>
+'http://www.rpgnow.com/includes/ajax/get_view_strip.php?view_strip=slider_view&strip_type=newest&manufacturers_id=22',
+	},
 );
 
 foreach my $url (@urls) {
@@ -41,56 +50,59 @@ foreach my $url (@urls) {
 	if ( defined($content) ) {
 		my $count = 0;
 		my $te    = HTML::TableExtract->new(
-			attribs   => { class => "infoBoxContents" },
-			depth     => 4,
+			attribs => {
+				cellspacing => 0,
+				cellpadding => 4,
+				border      => 0,
+			},
 			keep_html => 1
 		);
 
-		my $js_table = HTML::TableExtract->new(
-			attribs   => { border => 0, width => 200 },
-			keep_html => 0
-		);
-
 		$te->parse($content);
-		my $ts = $te->first_table_found();
+		foreach my $ts ( $te->tables() ) {
+			foreach my $fields ( $ts->rows() ) {
+				foreach my $data (@$fields) {
+					my ( $link, $title, $image, $price );
 
-		foreach my $fields ( $ts->rows() ) {
-			foreach my $data (@$fields) {
-				my ( $link, $title, $image, $price );
+					if ( $data =~
+						/(<span class="productSpecialPrice">.*?<\/span>)/i )
+					{
+						$price = $1;
+						$data =~
+						  /(<span class="productStrikePrice".*?<\/span>)/i;
+						$price .= " " . $1;
 
-				if ( $data =~
-					/(<span class="productSpecialPrice">.*?<\/span>)/i )
-				{
-					$price = $1;
-					$data =~ /(<span class="productStrikePrice".*?<\/span>)/i;
-					$price .= " ".$1;
-					print "$price\n";
-				}
-				elsif ( $data =~ /(\$[\d]{0,}\.[\d]{2})/i ) {
-					print "$1\n";
-					$price = $1;
-				}
+						#print "$price\n";
+					}
+					elsif ( $data =~ /(\$[\d]{0,}\.[\d]{2})/i ) {
 
-				if ( $data =~ /a href="([\S]+)"/ ) {
-					$link = $1;
-				}
-				if ( $data =~ /title="(.*?)"/ ) {
-					$title = $1;
-				}
+						#print "$1\n";
+						$price = $1;
+					}
 
-				$data =~ s/onmouseover=.*?;">//g;
-				if ( $data =~ /img src="([\S]+)"/ ) {
-					$image = $1;
-				}
+					if ( $data =~ /a href="([\S]+)"/ ) {
+						$link = $1;
+					}
+					if ( $data =~ /title="(.*?)"/ ) {
+						$title = $1;
+					}
 
-				if (   $link !~ /^[\s]*$/
-					&& $title !~ /^[\s]*$/
-					&& $image !~ /^[\s]*$/ )
-				{
-					if ( $count < 10 ) {
-						push @output,
-						  '<div class="rpgnowad"><a href="' . $link . '&'
-						  . $affiliate_id
+					$data =~ s/onmouseover=.*?;">//g;
+					if ( $data =~ /img src="([\S]+)"/ ) {
+						$image = $1;
+					}
+
+					if (   $link !~ /^[\s]*$/
+						&& $title !~ /^[\s]*$/
+						&& $image !~ /^[\s]*$/ )
+					{
+						if ( $link =~ /\?/ ) {
+							$link .= '&' . $affiliate_id;
+						}
+						else {
+							$link .= '?' . $affiliate_id;
+						}
+						push @output, '<div class="rpgnowad"><a href="' . $link
 						  . '"><img class="rpgnowadimage" src="http://www.rpgnow.com/'
 						  . $image
 						  . '"><br/>'
