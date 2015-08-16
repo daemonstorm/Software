@@ -43,6 +43,9 @@ if ( $mask_version == 4 ) {
 elsif ( $mask_version == 6 ) {
 	array_v6();
 }
+elsif ( $mask_version == 8) {
+	array_v8();
+}
 else {
 	die("version not set to a valid value to create GAL files from\n");
 }
@@ -260,5 +263,87 @@ WaferProcess=' . $basename . "\n";
 ', 1, $y, $x, $name, $name
 			);
 		}
+	}
+}
+
+sub array_v8 {
+
+	my $file =
+	  sprintf( '%s/v8/%s', $script_dir, 'main_maskfile.txt' )
+	  ;    # name of the input file for which holes are on which mask
+
+	my @output =
+	  ( '125k_' . $basename . '.gal' );
+
+	my @spacing =
+	  ( 18, 18 );    # horizontal and vertical spacing of the spots
+	my @area =
+	  ( 5544,7236 )
+	  ;    # total area that the peptides should cover (width, height)
+
+	my $orange = 0;    # are these supposed to be orange-crated or box
+	my @peptides
+	  ; # an array to hold reference arrays of which masks each peptide spot uses (spots are just the numeric index of the main array)
+	my @masks
+	  ; # on each mask which spots should be opened up in this design. This is a reverse map of the @peptides array
+
+	open FH, $file;
+	while ( my $line = <FH> ) {
+		chomp($line);
+		my @line = split( /,/, $line);
+		my @data;
+		my $count = 0;
+		foreach my $i (@line) {
+			push @data, $count if($i);
+			$count++;
+		}
+		push @peptides, \@data;
+	}
+
+	print @peptides . "\n";
+
+
+# determine the limit of the number of rows and columns that the area can hold. Really only the number of columns is used in later steps. Should consider throwing an error if the number of spots exceeds the allowed spacing
+	my $rows    = int( $area[1] / $spacing[1] );
+	my $columns = int( $area[0] / $spacing[0] );
+
+	print "$rows\t$columns\n";
+
+	open OUT, ">" . $output[0];
+	print OUT 'ATF	1.0
+5	5
+Type=GenePix ArrayList V1.0
+BlockCount=1
+BlockType=3
+WaferProcess=' . $basename . "\n";
+
+	print OUT "Block1= 100,100,10,$columns,"
+	  . $spacing[0]
+	  . ",$rows,"
+	  . $spacing[1] . "\n";
+	print OUT "Block\tRow\tColumn\tID\tName\n";
+
+	for ( my $spot = 0 ; $spot < $rows * $columns ; $spot++ ) {
+		last if ( $spot > $#peptides );
+		my $name;
+		for ( my $mask = 0 ; $mask < @mask_order ; $mask++ ) {
+			if ( lc( $mask_order[$mask] ) eq 'all' ) {
+				$name = $aa_order[$mask] . $name;
+				next;
+			}
+			my $number = $mask_order[$mask];
+			if ( grep( /^$number$/, @{ $peptides[$spot] } ) ) {
+				$name = $aa_order[$mask] . $name;
+			}
+
+		}
+
+		#$name = join('',reverse(split(//,$name)));
+		$name = 'empty' if ( $name =~ /^$/ );
+		my $x = int( $spot % $columns ) + 1;
+		my $y = int( $spot / $columns ) + 1;
+		printf( OUT '%d	%d	%d	%s	%s
+', 1, $y, $x, $name, $name
+		);
 	}
 }

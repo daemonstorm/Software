@@ -6,20 +6,21 @@ use List::MoreUtils qw/ uniq /;
 
 my $file    = shift;
 my @spacing =
-  ( 300, 259.8075, 75, 64.9519, 13, 11.25833 )
+  ( 18, 18 )
   ;    # horizontal and vertical spacing of the spots
-my @mag = ( 25, 6.25, 1 );
+my @mag = ( 14 );
 
-my @area =
-  ( 6482.080, 7475.220 )
-  ;    # total area that the peptides should cover (width, height)
+my @area = 
+  (5544,7236)
+  ;  # total area that the peptides should cover (width, height)
+     # adding 4um to the size to get the spacing calculations right later (18um pitch on 14um features) as the size really is 14n + 4(n-1)
 
-my $orange = 1;    # are these supposed to be orange-crated or box
+my $orange = 0;    # are these supposed to be orange-crated or box
 
 # if the peptides are orange-crated, how far in should the even rows be.
 # This value is half the horizontal spacing as they are supposed to create
 # equilateral triangles from the peptide spots
-my @offset = ( 150, 37.5, 6.5 );
+my @offset = ( 0 );
 
 # create the GDS library. Interestingly, this doesn't delete the file if it
 # already exists, but just overwrites the data in the file at the binary level.
@@ -30,27 +31,11 @@ my $gds2file = new GDS2( -fileName => ">test.gds" );
 # don't forget to ->printEndlib() <-- note the lower 'l'
 $gds2file->printInitLib( -name => "testlib" );
 
-# Draw the spot feature in this area. It should be a hexanol object 8um in total size
+# Draw the spot feature in this area. It should be a square object 1um in total size
 $gds2file->printBgnstr( -name => "spot" );
 $gds2file->printBoundary(
 	-layer => 4,
-	-xy    => [ 2, 0, 6, 0, 6, -1, 2, -1, 2, 0 ]
-);
-$gds2file->printBoundary(
-	-layer => 4,
-	-xy    => [ 1, -1, 7, -1, 7, -2, 1, -2, 1, -1 ]
-);
-$gds2file->printBoundary(
-	-layer => 4,
-	-xy    => [ 0, -2, 8, -2, 8, -6, 0, -6, 0, -2 ]
-);
-$gds2file->printBoundary(
-	-layer => 4,
-	-xy    => [ 1, -6, 7, -6, 7, -7, 1, -7, 1, -6 ]
-);
-$gds2file->printBoundary(
-	-layer => 4,
-	-xy    => [ 2, -7, 6, -7, 6, -8, 2, -8, 2, -7 ]
+	-xy    => [ 0, 0, 1, 0, 1, -1, 0, -1, 0, 0 ]
 );
 $gds2file->printEndstr();
 
@@ -235,7 +220,7 @@ $gds2file->printAref(
 );
 $gds2file->printAref(
 	-name    => "align_slide",
-	-xy      => [ 0, -76200.000, 0, 7 * 25400 - 76200, 0, -76200.000 ],
+	-xy      => [  0, 76200.000, 0, -7 * 25400 + 76200, 0, 76200.000 ],
 	-columns => 7,
 	-rows    => 1,
 	-angle   => 270,
@@ -271,8 +256,8 @@ my $count = 0;
 while ( my $line = <FH> ) {
 	chomp($line);
 	my @data = split( /,/, $line );
-	foreach (@data) {
-		push @{$masks[$_]}, $count;
+	for(my $i = 0; $i < @data; $i++) {
+		push @{$masks[$i]}, $count if($data[$i]);
 	}
 	$count++;
 }
@@ -282,30 +267,24 @@ foreach my $mask (@masks) {
 	if ( defined($mask) ) {
 		print "$count\n";
 
-		my @space = (
-			$spacing[ 2 * int( ( $count % 24 ) / 9 ) ],
-			$spacing[ 2 * int( ( $count % 24 ) / 9 ) + 1 ]
-		);
+		my @space = @spacing;
 
 		my $rows    = int( $area[1] / $space[1] );
 		my $columns = int( $area[0] / $space[0] );
 
 		if ( @{$mask} > 0 ) {
 			print scalar @{$mask} . "\n";
-			print int( ( $count % 24 ) / 9 )."\n";
 			# draw each mask layer with the needed spots based on the input file
 			$gds2file->printBgnstr(
 				-name => sprintf( "%s%03d", 'mask', $count ) );
 
 			foreach my $spot ( @{$mask} ) {
 				my $x = int( $spot % $columns ) * $space[0];
-				$x += $offset[ int( ( $count % 24 ) / 9 ) ]
-				  if ( int( $spot / $columns ) % 2 );
 				my $y = -1 * int( $spot / $columns ) * $space[1];
 				$gds2file->printSref(
 					-name => "spot",
 					-xy   => [ $x, $y ],
-					-mag  => $mag[ int( ( $count % 24 ) / 9 ) ]
+					-mag  => $mag[0 ]
 				);
 			}
 
@@ -329,14 +308,129 @@ foreach my $mask (@masks) {
 	$count++;
 }
 
+# similar to laying out the main sequences, laying out the types of QC regions, starting with the 16x16 arrays
+# then the 40x40 arrays and finally the resizing arrays that fit near them.
+my @qc_masks;
+open FH, shift;
+my $count = 0;
+while ( my $line = <FH> ) {
+	chomp($line);
+	my @data = split( /,/, $line );
+	for(my $i = 0; $i < @data; $i++) {
+		push @{$qc_masks[$i]}, $count if($data[$i]);
+	}
+	$count++;
+}
+
+foreach my $i (0..68) {
+	my $mask = $qc_masks[$i];
+	my @space = @spacing;
+	my $rows    = int( 16000 / 1000 );
+	my $columns = int( 16000 / 1000 );
+	if ( @{$mask} > 0 ) {
+		print scalar @{$mask} . "\n";
+		# draw each mask layer with the needed spots based on the input file
+		$gds2file->printBgnstr(
+			-name => sprintf( "%s%03d", 'qc_16_mask_', $i ) );
+		foreach my $spot ( @{$mask} ) {
+			my $x = int( $spot % $columns ) * 1000;
+			my $y = -1 * int( $spot / $columns ) * 1000;
+			$gds2file->printSref(
+				-name => "spot",
+				-xy   => [ $x, $y ],
+				-mag  => 800
+			);
+		}
+
+		$gds2file->printEndstr();
+		# done drawing the mask for this layer
+	}
+}
+
+my @qc_masks;
+open FH, shift;
+my $count = 0;
+while ( my $line = <FH> ) {
+	chomp($line);
+	my @data = split( /,/, $line );
+	for(my $i = 0; $i < @data; $i++) {
+		push @{$qc_masks[$i]}, $count if($data[$i]);
+	}
+	$count++;
+}
+
+foreach my $i (0..68) {
+	my $mask = $qc_masks[$i];
+	my @space = @spacing;
+	my $rows    = int( 16000 / 400 );
+	my $columns = int( 16000 / 400 );
+	if ( @{$mask} > 0 ) {
+		print scalar @{$mask} . "\n";
+		# draw each mask layer with the needed spots based on the input file
+		$gds2file->printBgnstr(
+			-name => sprintf( "%s%03d", 'qc_40_mask_', $i ) );
+		foreach my $spot ( @{$mask} ) {
+			my $x = int( $spot % $columns ) * 400;
+			my $y = -1 * int( $spot / $columns ) * 400;
+			$gds2file->printSref(
+				-name => "spot",
+				-xy   => [ $x, $y ],
+				-mag  => 300
+			);
+		}
+
+		$gds2file->printEndstr();
+		# done drawing the mask for this layer
+	}
+}
+
+# the 10x1 varying size array setup
+my @qc_masks;
+open FH, shift;
+foreach my $i (0..68) {
+	$qc_masks[$i] = [];
+}
+my $count = 0;
+while ( my $line = <FH> ) {
+	chomp($line);
+	my @data = split( /,/, $line );
+	for(my $i = 0; $i < @data; $i++) {
+		push @{$qc_masks[$i]}, $count if($data[$i]);
+	}
+	$count++;
+}
+
+foreach my $i (0..68) {
+	my $mask = $qc_masks[$i];
+	my @space = @spacing;
+	my $rows    = int( 10500 / 1050 );
+	my $columns = int( 10500 / 1050 );
+	print scalar @{$mask} . "\n";
+	# draw each mask layer with the needed spots based on the input file
+	$gds2file->printBgnstr(
+		-name => sprintf( "%s%03d", 'qc_10_mask_', $i ) );
+	foreach my $spot ( @{$mask} ) {
+		my $x = int( $spot % $columns ) * 1050;
+		my $y = -1 * int( $spot / $columns ) * 1050;
+		$gds2file->printSref(
+			-name => "spot",
+			-xy   => [ $x, $y ],
+			-mag  => 2**($spot+1)
+		);
+	}
+
+	$gds2file->printEndstr();
+	# done drawing the mask for this layer
+}
+
 # array the chips onto the slide layout
-for ( my $i = 0 ; $i < @masks / 24 ; $i++ ) {
+for ( my $i = 0 ; $i < @masks ; $i++ ) {
 	$gds2file->printBgnstr( -name => sprintf( "%s%03d", 'slide', $i ) );
 	for ( my $j = 0 ; $j < 24 ; $j++ ) {
-		if ( defined( $masks[ $i * 24 + $j ] ) ) {
-			printf( "laying out chip: %03d\n", $i * 24 + $j );
+		if ( defined( $masks[ $i ] ) ) {
+			#printf( "laying out chip: %03d\n", $i );
 			$gds2file->printSref(
-				-name => sprintf( "%s%03d", 'chip', $i * 24 + $j ),
+				-name => sprintf( "%s%03d", 'chip', $i ),
 				-xy   => [
 					-8056.880 + int( $j % 3 ) * 8031.480,
 					31497.27 - int( $j / 3 ) * 8999.220
@@ -368,7 +462,7 @@ for ( my $i = 0 ; $i < @masks / 24 ; $i++ ) {
 	);
 	$gds2file->printAref(
 		-name => sprintf( "%s%03d", 'slide', $i ),
-		-xy      => [ 0, -76200.000, 0, 7 * 25400 - 76200, 0, -76200.000 ],
+		-xy      => [ 0, 76200.000, 0, -7 * 25400 + 76200, 0, 76200.000 ],
 		-columns => 7,
 		-rows    => 1,
 		-angle   => 270,
@@ -390,7 +484,38 @@ for ( my $i = 0 ; $i < @masks / 24 ; $i++ ) {
 		-name => "align_exposure_manual",
 		-xy   => [ 55550.000, 0 ]
 	);
-
+	$gds2file->printSref(
+		-name => sprintf("%s%03d",'qc_16_mask_',$i),
+		-xy   => [-79550.000,55150.000]
+	);
+	$gds2file->printSref(
+		-name => sprintf("%s%03d",'qc_16_mask_',$i),
+		-xy   => [64550.000,55150.000]
+	);
+	$gds2file->printSref(
+		-name => sprintf("%s%03d",'qc_40_mask_',$i),
+		-xy   => [-79550.000,-39150.000]
+	);
+	$gds2file->printSref(
+		-name => sprintf("%s%03d",'qc_40_mask_',$i),
+		-xy   => [64550.000,-39150.000]
+	);
+	$gds2file->printSref(
+		-name => sprintf("%s%03d",'qc_10_mask_',$i),
+		-xy   => [27600.000,91050.000]
+	);
+	$gds2file->printSref(
+		-name => sprintf("%s%03d",'qc_10_mask_',$i),
+		-xy   => [-38100,91050.000]
+	);
+	$gds2file->printSref(
+		-name => sprintf("%s%03d",'qc_10_mask_',$i),
+		-xy   => [27600,-90000.000]
+	);
+	$gds2file->printSref(
+		-name => sprintf("%s%03d",'qc_10_mask_',$i),
+		-xy   => [-38100,-90000.000]
+	);
 	$gds2file->printEndstr();
 }
 
